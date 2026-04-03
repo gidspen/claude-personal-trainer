@@ -104,7 +104,7 @@ function registerTools(server) {
         session_start: 'Greet the user by name with energy. Reference what they did recently if anything — call them out for crushing it or missing days. Ask what they want to work on today.',
         programming: 'Design workouts based on the profile. Apply progressive overload — always check recent_workouts before prescribing weights or reps. Match exercises to available equipment. Get excited about their progress.',
         during_workout: 'Walk through one exercise at a time. Keep it punchy and motivating — short cues, real encouragement, no lectures. Celebrate wins out loud.',
-        logging: 'Call log_exercise the moment the user says they finished anything — do not wait or ask permission. Log heart rate whenever they mention it. Log food when they mention eating. Log body weight when they mention it.',
+        logging: 'Call log_exercise the moment the user says they finished anything — do not wait or ask permission. Log food when they mention eating.',
         tone: 'Fun, friendly, and fired up — but always honest. If they are slacking, skipping sessions, or eating like garbage, call it out directly with humor and zero judgment. Candid is caring. Never sugarcoat progress or lack of it.',
         plans: 'If no workout plans exist, build one based on the profile, get excited about it, and save it with save_workout_plan before starting the session.',
       },
@@ -125,9 +125,6 @@ function registerTools(server) {
 
   server.tool('update_profile', 'Update fitness profile — call this when user shares any info about themselves', {
     name: z.string().optional(),
-    age: z.number().optional(),
-    weight_lbs: z.number().optional(),
-    height_inches: z.number().optional(),
     fitness_goal: z.string().optional().describe('e.g. "lose fat, build muscle, improve endurance"'),
     fitness_level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
     equipment: z.string().optional().describe('List of available equipment, e.g. "squat rack, dumbbells, pull-up bar, bench"'),
@@ -140,10 +137,9 @@ function registerTools(server) {
   }, async (params) => {
     const existing = db.prepare('SELECT * FROM profile WHERE id = 1').get();
     if (!existing) {
-      db.prepare(`INSERT INTO profile (id, name, age, weight_lbs, height_inches, fitness_goal, fitness_level, equipment, injuries, training_days_per_week, session_duration_minutes, preferred_style, training_history, notes, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
-        .run(params.name ?? null, params.age ?? null, params.weight_lbs ?? null, params.height_inches ?? null,
-          params.fitness_goal ?? null, params.fitness_level ?? 'intermediate',
+      db.prepare(`INSERT INTO profile (id, name, fitness_goal, fitness_level, equipment, injuries, training_days_per_week, session_duration_minutes, preferred_style, training_history, notes, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+        .run(params.name ?? null, params.fitness_goal ?? null, params.fitness_level ?? 'intermediate',
           params.equipment ?? null, params.injuries ?? null,
           params.training_days_per_week ?? null, params.session_duration_minutes ?? null,
           params.preferred_style ?? null, params.training_history ?? null, params.notes ?? null);
@@ -189,8 +185,6 @@ function registerTools(server) {
     reps_per_set: z.string().optional().describe('e.g. "10,10,8" or "10" if all sets equal'),
     weight_lbs: z.number().optional(),
     duration_minutes: z.number().optional(),
-    heart_rate_avg: z.number().optional().describe('Average HR — log whenever user mentions it'),
-    heart_rate_max: z.number().optional().describe('Peak HR'),
     rpe: z.number().min(1).max(10).optional().describe('Rate of perceived exertion 1-10'),
     notes: z.string().optional(),
   }, async (params) => {
@@ -198,7 +192,7 @@ function registerTools(server) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(params.exercise, params.sets_completed ?? null, params.reps_per_set ?? null,
         params.weight_lbs ?? null, params.duration_minutes ?? null,
-        params.heart_rate_avg ?? null, params.heart_rate_max ?? null,
+        null, null,
         params.rpe ?? null, params.notes ?? null);
     return { content: [{ type: 'text', text: `Logged: ${params.exercise} at ${new Date().toLocaleString()} (id: ${result.lastInsertRowid})` }] };
   });
@@ -245,16 +239,6 @@ function registerTools(server) {
     return { content: [{ type: 'text', text: `Food logged: ${params.meal} at ${new Date().toLocaleString()} (id: ${result.lastInsertRowid})` }] };
   });
 
-  server.tool('log_body_metrics', 'Log body weight, body fat %, or resting heart rate', {
-    weight_lbs: z.number().optional(),
-    body_fat_pct: z.number().optional(),
-    resting_heart_rate: z.number().optional(),
-    notes: z.string().optional(),
-  }, async (params) => {
-    db.prepare(`INSERT INTO body_metrics (weight_lbs, body_fat_pct, resting_heart_rate, notes) VALUES (?, ?, ?, ?)`)
-      .run(params.weight_lbs ?? null, params.body_fat_pct ?? null, params.resting_heart_rate ?? null, params.notes ?? null);
-    return { content: [{ type: 'text', text: `Body metrics logged at ${new Date().toLocaleString()}` }] };
-  });
 
   server.tool('get_progress_summary', 'Get multi-week progress: weight trend, workout frequency, top exercises', {
     weeks: z.number().default(4),
