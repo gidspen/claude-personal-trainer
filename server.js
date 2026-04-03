@@ -85,9 +85,6 @@ function registerTools(server) {
 
     const REQUIRED = [
       { field: 'name',                    question: "What's your name?" },
-      { field: 'age',                     question: "How old are you?" },
-      { field: 'weight_lbs',              question: "What's your current weight (in lbs)?" },
-      { field: 'height_inches',           question: "How tall are you?" },
       { field: 'fitness_goal',            question: "What's your main fitness goal? (e.g. lose fat, build muscle, improve strength, general health)" },
       { field: 'training_days_per_week',  question: "How many days per week can you train?" },
       { field: 'session_duration_minutes',question: "How long is each session? (e.g. 45 min, 60 min, 90 min)" },
