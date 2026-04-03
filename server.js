@@ -83,26 +83,10 @@ function registerTools(server) {
   server.tool('start_session', 'Call this at the start of every conversation. Returns onboarding questions if profile is incomplete, or full training context if ready.', {}, async () => {
     const profile = db.prepare('SELECT * FROM profile WHERE id = 1').get();
 
-    const REQUIRED = [
-      { field: 'name',                    question: "What's your name?" },
-      { field: 'fitness_goal',            question: "What's your main fitness goal? (e.g. lose fat, build muscle, improve strength, general health)" },
-      { field: 'training_days_per_week',  question: "How many days per week can you train?" },
-      { field: 'session_duration_minutes',question: "How long is each session? (e.g. 45 min, 60 min, 90 min)" },
-      { field: 'equipment',               question: "What equipment do you have access to? Be specific — squat rack, dumbbells, cables, bench, etc." },
-      { field: 'training_history',        question: "How long have you been training and what have you mostly done?" },
-      { field: 'preferred_style',         question: "Any preference on training style? Strength, hypertrophy, powerlifting, conditioning, circuits — or no preference?" },
-      { field: 'injuries',                question: "Any injuries, pain, or movements you need to avoid?" },
-    ];
-
-    const missing = REQUIRED.filter(r => !profile || !profile[r.field]);
-
-    if (missing.length > 0) {
+    if (!profile || !profile.fitness_goal) {
       return { content: [{ type: 'text', text: JSON.stringify({
         status: 'needs_onboarding',
-        instructions: 'New client — time to get them set up! Ask questions one at a time, conversationally and with energy, like you are genuinely pumped to start working with them. Not a form, not a list — a real conversation. Call update_profile after each answer before asking the next. Once done, build their program, get excited about it, and save it with save_workout_plan.',
-        next_question: missing[0].question,
-        remaining_questions: missing.map(r => r.question),
-        completed_fields: profile ? REQUIRED.filter(r => profile[r.field]).map(r => r.field) : [],
+        instructions: 'New client. Introduce yourself as Coach with energy and excitement. Then say exactly this: "Share whatever you want me to know — where you are today, where you want to be, by when, what your goals are, what equipment you have available. The more context the better." Then wait. When they respond, extract everything useful and call update_profile once to save it all. Then build their program and save it with save_workout_plan.',
       }, null, 2) }] };
     }
 
