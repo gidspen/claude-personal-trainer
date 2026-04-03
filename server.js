@@ -303,7 +303,10 @@ app.use((req, res, next) => {
 
 // Stateless: new server + transport per request
 app.post('/mcp', async (req, res) => {
-  const server = new McpServer({ name: 'personal-trainer', version: '1.0.0' });
+  const server = new McpServer(
+    { name: 'personal-trainer', version: '1.0.0' },
+    { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
+  );
   registerTools(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
@@ -311,7 +314,10 @@ app.post('/mcp', async (req, res) => {
 });
 
 app.get('/mcp', async (req, res) => {
-  const server = new McpServer({ name: 'personal-trainer', version: '1.0.0' });
+  const server = new McpServer(
+    { name: 'personal-trainer', version: '1.0.0' },
+    { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
+  );
   registerTools(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
@@ -319,7 +325,10 @@ app.get('/mcp', async (req, res) => {
 });
 
 app.delete('/mcp', async (req, res) => {
-  const server = new McpServer({ name: 'personal-trainer', version: '1.0.0' });
+  const server = new McpServer(
+    { name: 'personal-trainer', version: '1.0.0' },
+    { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
+  );
   registerTools(server);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
