@@ -80,6 +80,53 @@ db.exec(`
 
 function registerTools(server) {
 
+  server.tool('start_session', 'Call this at the start of every conversation. Returns onboarding questions if profile is incomplete, or full training context if ready.', {}, async () => {
+    const profile = db.prepare('SELECT * FROM profile WHERE id = 1').get();
+
+    const REQUIRED = [
+      { field: 'name',                    question: "What's your name?" },
+      { field: 'age',                     question: "How old are you?" },
+      { field: 'weight_lbs',              question: "What's your current weight (in lbs)?" },
+      { field: 'height_inches',           question: "How tall are you?" },
+      { field: 'fitness_goal',            question: "What's your main fitness goal? (e.g. lose fat, build muscle, improve strength, general health)" },
+      { field: 'training_days_per_week',  question: "How many days per week can you train?" },
+      { field: 'session_duration_minutes',question: "How long is each session? (e.g. 45 min, 60 min, 90 min)" },
+      { field: 'equipment',               question: "What equipment do you have access to? Be specific — squat rack, dumbbells, cables, bench, etc." },
+      { field: 'training_history',        question: "How long have you been training and what have you mostly done?" },
+      { field: 'preferred_style',         question: "Any preference on training style? Strength, hypertrophy, powerlifting, conditioning, circuits — or no preference?" },
+      { field: 'injuries',                question: "Any injuries, pain, or movements you need to avoid?" },
+    ];
+
+    const missing = REQUIRED.filter(r => !profile || !profile[r.field]);
+
+    if (missing.length > 0) {
+      return { content: [{ type: 'text', text: JSON.stringify({
+        status: 'needs_onboarding',
+        message: 'Profile incomplete. Ask these questions one at a time, saving each answer immediately with update_profile before asking the next.',
+        next_question: missing[0].question,
+        remaining_questions: missing.map(r => r.question),
+        completed_fields: profile ? REQUIRED.filter(r => profile[r.field]).map(r => r.field) : [],
+      }, null, 2) }] };
+    }
+
+    // Profile complete — return full training context
+    const recentWorkouts = db.prepare(`SELECT * FROM workout_logs WHERE logged_at >= datetime('now', '-7 days') ORDER BY logged_at DESC LIMIT 30`).all();
+    const todayExercises = db.prepare(`SELECT * FROM workout_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
+    const todayFood = db.prepare(`SELECT * FROM food_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
+    const latestMetrics = db.prepare(`SELECT * FROM body_metrics ORDER BY logged_at DESC LIMIT 1`).get();
+    const plans = db.prepare(`SELECT * FROM workout_plans WHERE active = 1 ORDER BY day_of_week`).all();
+
+    return { content: [{ type: 'text', text: JSON.stringify({
+      status: 'ready',
+      profile,
+      workout_plans: plans.map(p => ({ ...p, exercises: JSON.parse(p.exercises) })),
+      recent_workouts_7_days: recentWorkouts,
+      todays_exercises_so_far: todayExercises,
+      todays_food_so_far: todayFood,
+      latest_body_metrics: latestMetrics ?? null,
+    }, null, 2) }] };
+  });
+
   server.tool('get_profile', 'Get the user\'s fitness profile, goals, equipment, and injuries', {}, async () => {
     const profile = db.prepare('SELECT * FROM profile WHERE id = 1').get();
     if (!profile) return { content: [{ type: 'text', text: 'No profile set yet. Use update_profile to create one.' }] };
