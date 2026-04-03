@@ -291,15 +291,6 @@ function registerTools(server) {
 const app = express();
 app.use(express.json());
 
-const MCP_SECRET = process.env.MCP_SECRET;
-if (!MCP_SECRET) console.error('WARNING: MCP_SECRET not set — server will reject all requests.');
-
-app.use((req, res, next) => {
-  if (req.path === '/health') return next();
-  const auth = req.headers['authorization'];
-  if (!MCP_SECRET || auth !== `Bearer ${MCP_SECRET}`) return res.status(401).json({ error: 'Unauthorized' });
-  next();
-});
 
 // Stateless: new server + transport per request
 app.post('/mcp', async (req, res) => {
