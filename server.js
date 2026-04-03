@@ -7,6 +7,20 @@ import db from './db.js';
 const app = express();
 app.use(express.json());
 
+const MCP_SECRET = process.env.MCP_SECRET;
+if (!MCP_SECRET) {
+  console.error('ERROR: MCP_SECRET env var is not set. Server will reject all requests.');
+}
+
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  const auth = req.headers['authorization'];
+  if (!MCP_SECRET || auth !== `Bearer ${MCP_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
 // ── MCP Server ──────────────────────────────────────────────────────────────
 
 const server = new McpServer({
