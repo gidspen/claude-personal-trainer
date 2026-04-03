@@ -23,6 +23,10 @@ db.exec(`
     fitness_level TEXT DEFAULT 'intermediate',
     equipment TEXT,
     injuries TEXT,
+    training_days_per_week INTEGER,
+    session_duration_minutes INTEGER,
+    preferred_style TEXT,
+    training_history TEXT,
     notes TEXT,
     updated_at TEXT DEFAULT (datetime('now'))
   );
@@ -91,15 +95,21 @@ function registerTools(server) {
     fitness_level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
     equipment: z.string().optional().describe('List of available equipment, e.g. "squat rack, dumbbells, pull-up bar, bench"'),
     injuries: z.string().optional().describe('Any injuries, limitations, or exercises to avoid'),
+    training_days_per_week: z.number().optional().describe('How many days per week they can train'),
+    session_duration_minutes: z.number().optional().describe('How long each session can be in minutes'),
+    preferred_style: z.string().optional().describe('e.g. "strength, hypertrophy, HIIT, powerlifting, general fitness"'),
+    training_history: z.string().optional().describe('e.g. "3 years lifting, mostly machines, new to free weights"'),
     notes: z.string().optional(),
   }, async (params) => {
     const existing = db.prepare('SELECT * FROM profile WHERE id = 1').get();
     if (!existing) {
-      db.prepare(`INSERT INTO profile (id, name, age, weight_lbs, height_inches, fitness_goal, fitness_level, equipment, injuries, notes, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+      db.prepare(`INSERT INTO profile (id, name, age, weight_lbs, height_inches, fitness_goal, fitness_level, equipment, injuries, training_days_per_week, session_duration_minutes, preferred_style, training_history, notes, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
         .run(params.name ?? null, params.age ?? null, params.weight_lbs ?? null, params.height_inches ?? null,
           params.fitness_goal ?? null, params.fitness_level ?? 'intermediate',
-          params.equipment ?? null, params.injuries ?? null, params.notes ?? null);
+          params.equipment ?? null, params.injuries ?? null,
+          params.training_days_per_week ?? null, params.session_duration_minutes ?? null,
+          params.preferred_style ?? null, params.training_history ?? null, params.notes ?? null);
     } else {
       const fields = [];
       const values = [];
