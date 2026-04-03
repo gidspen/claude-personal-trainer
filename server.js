@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { DatabaseSync } from 'node:sqlite';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes, createHash } from 'crypto';
 
 // ── Database ─────────────────────────────────────────────────────────────────
 
@@ -16,9 +17,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY DEFAULT 1,
     name TEXT,
-    age INTEGER,
-    weight_lbs REAL,
-    height_inches REAL,
     fitness_goal TEXT,
     fitness_level TEXT DEFAULT 'intermediate',
     equipment TEXT,
@@ -47,8 +45,6 @@ db.exec(`
     reps_per_set TEXT,
     weight_lbs REAL,
     duration_minutes REAL,
-    heart_rate_avg INTEGER,
-    heart_rate_max INTEGER,
     rpe INTEGER,
     notes TEXT,
     logged_at TEXT DEFAULT (datetime('now'))
@@ -65,18 +61,38 @@ db.exec(`
     logged_at TEXT DEFAULT (datetime('now'))
   );
 
-  CREATE TABLE IF NOT EXISTS body_metrics (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    weight_lbs REAL,
-    body_fat_pct REAL,
-    resting_heart_rate INTEGER,
-    notes TEXT,
-    logged_at TEXT DEFAULT (datetime('now'))
+  CREATE TABLE IF NOT EXISTS oauth_codes (
+    code TEXT PRIMARY KEY,
+    code_challenge TEXT,
+    code_challenge_method TEXT,
+    redirect_uri TEXT,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE IF NOT EXISTS oauth_tokens (
+    token TEXT PRIMARY KEY,
+    created_at INTEGER DEFAULT (unixepoch())
   );
 `);
 
+// ── OAuth helpers ─────────────────────────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  const token = auth.slice(7);
+  const stored = db.prepare('SELECT token FROM oauth_tokens WHERE token = ?').get(token);
+  if (!stored) {
+    res.status(401).json({ error: 'invalid_token' });
+    return;
+  }
+  next();
+}
+
 // ── Tool registration ────────────────────────────────────────────────────────
-// Called on every new McpServer instance (stateless pattern)
 
 function registerTools(server) {
 
@@ -90,11 +106,9 @@ function registerTools(server) {
       }, null, 2) }] };
     }
 
-    // Profile complete — return full training context + behavioral instructions
     const recentWorkouts = db.prepare(`SELECT * FROM workout_logs WHERE logged_at >= datetime('now', '-7 days') ORDER BY logged_at DESC LIMIT 30`).all();
     const todayExercises = db.prepare(`SELECT * FROM workout_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
     const todayFood = db.prepare(`SELECT * FROM food_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
-    const latestMetrics = db.prepare(`SELECT * FROM body_metrics ORDER BY logged_at DESC LIMIT 1`).get();
     const plans = db.prepare(`SELECT * FROM workout_plans WHERE active = 1 ORDER BY day_of_week`).all();
 
     return { content: [{ type: 'text', text: JSON.stringify({
@@ -113,7 +127,6 @@ function registerTools(server) {
       recent_workouts_7_days: recentWorkouts,
       todays_exercises_so_far: todayExercises,
       todays_food_so_far: todayFood,
-      latest_body_metrics: latestMetrics ?? null,
     }, null, 2) }] };
   });
 
@@ -188,19 +201,17 @@ function registerTools(server) {
     rpe: z.number().min(1).max(10).optional().describe('Rate of perceived exertion 1-10'),
     notes: z.string().optional(),
   }, async (params) => {
-    const result = db.prepare(`INSERT INTO workout_logs (exercise, sets_completed, reps_per_set, weight_lbs, duration_minutes, heart_rate_avg, heart_rate_max, rpe, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    const result = db.prepare(`INSERT INTO workout_logs (exercise, sets_completed, reps_per_set, weight_lbs, duration_minutes, rpe, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(params.exercise, params.sets_completed ?? null, params.reps_per_set ?? null,
         params.weight_lbs ?? null, params.duration_minutes ?? null,
-        null, null,
         params.rpe ?? null, params.notes ?? null);
     return { content: [{ type: 'text', text: `Logged: ${params.exercise} at ${new Date().toLocaleString()} (id: ${result.lastInsertRowid})` }] };
   });
 
-  server.tool('get_todays_workout_summary', 'Get everything logged today — exercises, food, and body metrics', {}, async () => {
+  server.tool('get_todays_workout_summary', 'Get everything logged today — exercises and food', {}, async () => {
     const exercises = db.prepare(`SELECT * FROM workout_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
     const food = db.prepare(`SELECT * FROM food_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
-    const metrics = db.prepare(`SELECT * FROM body_metrics WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
     return { content: [{ type: 'text', text: JSON.stringify({
       date: new Date().toLocaleDateString(),
       exercises_logged: exercises.length,
@@ -209,7 +220,6 @@ function registerTools(server) {
       total_calories_today: food.reduce((s, f) => s + (f.calories || 0), 0),
       total_protein_today_g: food.reduce((s, f) => s + (f.protein_g || 0), 0),
       food,
-      body_metrics: metrics,
     }, null, 2) }] };
   });
 
@@ -239,53 +249,252 @@ function registerTools(server) {
     return { content: [{ type: 'text', text: `Food logged: ${params.meal} at ${new Date().toLocaleString()} (id: ${result.lastInsertRowid})` }] };
   });
 
-
-  server.tool('get_progress_summary', 'Get multi-week progress: weight trend, workout frequency, top exercises', {
+  server.tool('get_progress_summary', 'Get multi-week progress: workout frequency, top exercises', {
     weeks: z.number().default(4),
   }, async (params) => {
     const days = params.weeks * 7;
     const workoutFreq = db.prepare(`SELECT date(logged_at) as day, COUNT(*) as exercises_logged FROM workout_logs WHERE logged_at >= datetime('now', '-${days} days') GROUP BY date(logged_at) ORDER BY day DESC`).all();
-    const weightTrend = db.prepare(`SELECT date(logged_at) as day, weight_lbs FROM body_metrics WHERE weight_lbs IS NOT NULL AND logged_at >= datetime('now', '-${days} days') ORDER BY day DESC`).all();
     const topExercises = db.prepare(`SELECT exercise, COUNT(*) as sessions FROM workout_logs WHERE logged_at >= datetime('now', '-${days} days') GROUP BY exercise ORDER BY sessions DESC LIMIT 10`).all();
-    return { content: [{ type: 'text', text: JSON.stringify({ period: `Last ${params.weeks} weeks`, total_workout_days: workoutFreq.length, workout_frequency_by_day: workoutFreq, weight_trend: weightTrend, top_exercises: topExercises }, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify({ period: `Last ${params.weeks} weeks`, total_workout_days: workoutFreq.length, workout_frequency_by_day: workoutFreq, top_exercises: topExercises }, null, 2) }] };
   });
 }
 
-// ── Express + stateless MCP handler ─────────────────────────────────────────
+// ── Express app ───────────────────────────────────────────────────────────────
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
+// ── OAuth endpoints ───────────────────────────────────────────────────────────
 
-// Stateless: new server + transport per request
-app.post('/mcp', async (req, res) => {
+app.get('/.well-known/oauth-authorization-server', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({
+    issuer: base,
+    authorization_endpoint: `${base}/authorize`,
+    token_endpoint: `${base}/token`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code'],
+    code_challenge_methods_supported: ['S256'],
+  });
+});
+
+app.get('/authorize', (req, res) => {
+  const { redirect_uri, state, code_challenge, code_challenge_method, client_id } = req.query;
+
+  const params = new URLSearchParams({ redirect_uri, state, code_challenge, code_challenge_method: code_challenge_method || 'S256' }).toString();
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect Your Personal Trainer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #141414;
+      border: 1px solid #222;
+      border-radius: 20px;
+      padding: 40px 36px;
+      max-width: 420px;
+      width: 100%;
+    }
+    .icon {
+      font-size: 48px;
+      margin-bottom: 20px;
+      display: block;
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+    .subtitle {
+      color: #888;
+      font-size: 15px;
+      line-height: 1.5;
+      margin-bottom: 32px;
+    }
+    .steps {
+      list-style: none;
+      margin-bottom: 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .steps li {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .step-num {
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .step-text {
+      font-size: 15px;
+      color: #ccc;
+      line-height: 1.4;
+    }
+    .step-text strong {
+      color: #fff;
+    }
+    button {
+      width: 100%;
+      padding: 16px;
+      background: #fff;
+      color: #000;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.9; }
+    .fine-print {
+      text-align: center;
+      color: #444;
+      font-size: 12px;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="icon">🏋️</span>
+    <h1>Ready to meet your Coach?</h1>
+    <p class="subtitle">Your AI personal trainer lives inside Claude. Here's how it works:</p>
+
+    <ul class="steps">
+      <li>
+        <div class="step-num">1</div>
+        <div class="step-text"><strong>Tell Coach about yourself</strong> — your goals, equipment, and training history. The more you share, the better your program.</div>
+      </li>
+      <li>
+        <div class="step-num">2</div>
+        <div class="step-text"><strong>Get a custom program</strong> — Coach builds a plan around your schedule and equipment, and adjusts it as you progress.</div>
+      </li>
+      <li>
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>Train and log as you go</strong> — just talk. Coach tracks your workouts and food automatically during the conversation.</div>
+      </li>
+    </ul>
+
+    <form method="POST" action="/authorize?${params}">
+      <button type="submit">Let's go →</button>
+    </form>
+    <p class="fine-print">No subscription. No account. Just Coach.</p>
+  </div>
+</body>
+</html>`);
+});
+
+app.post('/authorize', (req, res) => {
+  const { redirect_uri, state, code_challenge, code_challenge_method } = req.query;
+
+  if (!redirect_uri) {
+    res.status(400).send('Missing redirect_uri');
+    return;
+  }
+
+  const code = randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO oauth_codes (code, code_challenge, code_challenge_method, redirect_uri) VALUES (?, ?, ?, ?)')
+    .run(code, code_challenge ?? null, code_challenge_method ?? 'S256', redirect_uri);
+
+  const url = new URL(redirect_uri);
+  url.searchParams.set('code', code);
+  if (state) url.searchParams.set('state', state);
+  res.redirect(url.toString());
+});
+
+app.post('/token', (req, res) => {
+  const { code, code_verifier, grant_type } = req.body;
+
+  if (grant_type !== 'authorization_code') {
+    res.status(400).json({ error: 'unsupported_grant_type' });
+    return;
+  }
+
+  const stored = db.prepare('SELECT * FROM oauth_codes WHERE code = ?').get(code);
+  if (!stored) {
+    res.status(400).json({ error: 'invalid_grant' });
+    return;
+  }
+
+  // Verify PKCE (S256)
+  if (stored.code_challenge) {
+    const hash = createHash('sha256').update(code_verifier ?? '').digest('base64url');
+    if (hash !== stored.code_challenge) {
+      res.status(400).json({ error: 'invalid_grant' });
+      return;
+    }
+  }
+
+  // Expire codes older than 10 minutes and delete used code
+  db.prepare('DELETE FROM oauth_codes WHERE created_at < unixepoch() - 600').run();
+  db.prepare('DELETE FROM oauth_codes WHERE code = ?').run(code);
+
+  const token = randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO oauth_tokens (token) VALUES (?)').run(token);
+
+  res.json({
+    access_token: token,
+    token_type: 'Bearer',
+    expires_in: 365 * 24 * 3600,
+  });
+});
+
+// ── MCP routes (auth required) ────────────────────────────────────────────────
+
+function makeMcpServer() {
   const server = new McpServer(
     { name: 'personal-trainer', version: '1.0.0' },
     { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
   );
   registerTools(server);
+  return server;
+}
+
+app.post('/mcp', requireAuth, async (req, res) => {
+  const server = makeMcpServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, req.body);
 });
 
-app.get('/mcp', async (req, res) => {
-  const server = new McpServer(
-    { name: 'personal-trainer', version: '1.0.0' },
-    { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
-  );
-  registerTools(server);
+app.get('/mcp', requireAuth, async (req, res) => {
+  const server = makeMcpServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res);
 });
 
-app.delete('/mcp', async (req, res) => {
-  const server = new McpServer(
-    { name: 'personal-trainer', version: '1.0.0' },
-    { instructions: 'Call start_session at the beginning of every conversation before saying anything to the user.' }
-  );
-  registerTools(server);
+app.delete('/mcp', requireAuth, async (req, res) => {
+  const server = makeMcpServer();
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res);
