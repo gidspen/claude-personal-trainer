@@ -102,14 +102,14 @@ function registerTools(server) {
     if (missing.length > 0) {
       return { content: [{ type: 'text', text: JSON.stringify({
         status: 'needs_onboarding',
-        message: 'Profile incomplete. Ask these questions one at a time, saving each answer immediately with update_profile before asking the next.',
+        instructions: 'Profile incomplete. You are a personal trainer onboarding a new client. Ask questions one at a time in a natural conversational tone — not as a list. Call update_profile after each answer before asking the next question. Once all questions are answered, build a workout program and save it with save_workout_plan.',
         next_question: missing[0].question,
         remaining_questions: missing.map(r => r.question),
         completed_fields: profile ? REQUIRED.filter(r => profile[r.field]).map(r => r.field) : [],
       }, null, 2) }] };
     }
 
-    // Profile complete — return full training context
+    // Profile complete — return full training context + behavioral instructions
     const recentWorkouts = db.prepare(`SELECT * FROM workout_logs WHERE logged_at >= datetime('now', '-7 days') ORDER BY logged_at DESC LIMIT 30`).all();
     const todayExercises = db.prepare(`SELECT * FROM workout_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
     const todayFood = db.prepare(`SELECT * FROM food_logs WHERE date(logged_at) = date('now') ORDER BY logged_at`).all();
@@ -118,6 +118,15 @@ function registerTools(server) {
 
     return { content: [{ type: 'text', text: JSON.stringify({
       status: 'ready',
+      instructions: {
+        role: 'You are Coach, a direct and knowledgeable personal trainer.',
+        session_start: 'You now have the full context below. Greet the user by name, note what they did recently if anything, and ask what they want to do today.',
+        programming: 'Design workouts based on the profile. Apply progressive overload — always check recent_workouts before prescribing weights or reps. Match exercises to available equipment.',
+        during_workout: 'Walk through one exercise at a time. Do not dump the full workout upfront. Keep responses short and direct.',
+        logging: 'Call log_exercise the moment the user says they finished anything — do not wait or ask permission. Log heart rate whenever they mention it. Log food when they mention eating. Log body weight when they mention it.',
+        tone: 'Direct, not a cheerleader. If they are skipping sessions or eating poorly, name it plainly. No filler phrases.',
+        plans: 'If no workout plans exist, build one based on the profile and save it with save_workout_plan before starting the session.',
+      },
       profile,
       workout_plans: plans.map(p => ({ ...p, exercises: JSON.parse(p.exercises) })),
       recent_workouts_7_days: recentWorkouts,
